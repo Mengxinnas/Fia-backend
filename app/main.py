@@ -32,10 +32,6 @@ class QuestionRequest(BaseModel):
 class AnalysisRequest(BaseModel):
     analysis_type: str = "comprehensive"
     company_name: Optional[str] = None
-
-class StreamAnalysisRequest(BaseModel):
-    analysis_type: str = "comprehensive"
-    company_name: Optional[str] = None
     task_id: Optional[str] = None
 
 # 初始化服务
@@ -130,29 +126,13 @@ async def ask_question(request: QuestionRequest):
 
 @app.post("/api/financial-analysis")
 async def financial_analysis(request: AnalysisRequest):
-    """财务分析接口"""
-    try:
-        analysis = await financial_service.generate_analysis(
-            analysis_type=request.analysis_type,
-            company_name=request.company_name
-        )
-        return {
-            "success": True,
-            "analysis": analysis,
-            "analysis_type": request.analysis_type,
-            "company_name": request.company_name
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"财务分析失败: {str(e)}")
-
-@app.post("/api/financial-analysis/stream")
-async def stream_financial_analysis(request: StreamAnalysisRequest):
     """流式财务分析接口"""
     try:
         return StreamingResponse(
             financial_service.stream_analysis(
                 analysis_type=request.analysis_type,
-                task_id=request.task_id
+                task_id=request.task_id,
+                company_name=request.company_name
             ),
             media_type="text/event-stream",
             headers={
@@ -163,7 +143,7 @@ async def stream_financial_analysis(request: StreamAnalysisRequest):
             }
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"流式分析失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"财务分析失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

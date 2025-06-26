@@ -8,42 +8,107 @@ from app.services.vector_service import vector_service
 from app.services.qa_service import QAService
 import json
 
-class FinancialAnalysisService:
+class FinancialService:
     """财务分析服务"""
     
     def __init__(self):
-        self.qa_service = QAService()
         self.running_tasks: Dict[str, Dict[str, Any]] = {}
         
-    async def generate_analysis(self, analysis_type: str = "comprehensive", company_name: Optional[str] = None) -> str:
-        """生成财务分析"""
+    async def stream_analysis(self, analysis_type: str, task_id: Optional[str] = None, company_name: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """流式财务分析"""
         try:
+            if not task_id:
+                task_id = str(uuid.uuid4())
+            
+            from app.services.qa_service import QAService
+            qa_service = QAService()
+            
             company_display_name = company_name or "分析企业"
             
-            # 根据分析类型生成不同的分析内容
+            # 开始分析
             analysis_questions = self._get_analysis_questions(analysis_type)
+            total_questions = len(analysis_questions)
             
-            analysis_parts = []
+            # 发送开始信号
+            start_data = {
+                "status": "started",
+                "task_id": task_id,
+                "total_steps": total_questions,
+                "company_name": company_display_name,
+                "analysis_type": self._get_analysis_type_name(analysis_type)
+            }
+            yield f"data: {json.dumps(start_data)}\n\n"
             
-            for section, question in analysis_questions.items():
-                # 获取答案
-                answer = await self.qa_service.answer_question(question)
-                analysis_parts.append(f"## {section}\n\n{answer}\n")
+            for i, (section, question) in enumerate(analysis_questions.items()):
+                progress = (i / total_questions) * 100
                 
-                # 模拟处理时间
-                await asyncio.sleep(0.1)
+                # 发送处理状态
+                processing_data = {
+                    "status": "processing",
+                    "step": section,
+                    "progress": progress,
+                    "current_step": i + 1,
+                    "total_steps": total_questions
+                }
+                yield f"data: {json.dumps(processing_data)}\n\n"
+                
+                # 获取分析结果
+                try:
+                    result = await qa_service.answer_question(question)
+                    
+                    if result:
+                        # 发送完成的步骤
+                        completed_data = {
+                            "status": "step_completed",
+                            "section": section,
+                            "content": result,
+                            "progress": progress,
+                            "current_step": i + 1
+                        }
+                        yield f"data: {json.dumps(completed_data)}\n\n"
+                    else:
+                        # 发送错误步骤
+                        error_data = {
+                            "status": "step_error", 
+                            "section": section,
+                            "error": "无法获取相关分析信息",
+                            "progress": progress,
+                            "current_step": i + 1
+                        }
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                        
+                except Exception as e:
+                    # 发送步骤错误
+                    error_data = {
+                        "status": "step_error",
+                        "section": section, 
+                        "error": str(e),
+                        "progress": progress,
+                        "current_step": i + 1
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+                
+                await asyncio.sleep(0.2)  # 稍微增加延时，让流式效果更明显
             
-            # 生成完整报告
-            full_analysis = f"# {company_display_name}财务分析报告\n\n"
-            full_analysis += f"**分析类型**: {self._get_analysis_type_name(analysis_type)}\n"
-            full_analysis += f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            full_analysis += "---\n\n"
-            full_analysis += "\n".join(analysis_parts)
-            
-            return full_analysis
+            # 发送完成信号
+            completed_data = {
+                "status": "completed",
+                "task_id": task_id,
+                "progress": 100,
+                "company_name": company_display_name,
+                "analysis_type": self._get_analysis_type_name(analysis_type),
+                "completed_at": datetime.now().isoformat()
+            }
+            yield f"data: {json.dumps(completed_data)}\n\n"
             
         except Exception as e:
-            return f"财务分析生成失败: {str(e)}"
+            # 发送全局错误
+            error_data = {
+                "status": "error",
+                "error": str(e),
+                "task_id": task_id if 'task_id' in locals() else None
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
     
     def _get_analysis_questions(self, analysis_type: str) -> Dict[str, str]:
         """获取不同类型的分析问题"""
@@ -136,82 +201,6 @@ class FinancialAnalysisService:
             "cashflow": "现金流量分析"
         }
         return type_names.get(analysis_type, "综合财务分析")
-    
-    async def stream_analysis(self, analysis_type: str, task_id: Optional[str] = None) -> AsyncGenerator[str, None]:
-        """流式财务分析"""
-        try:
-            if not task_id:
-                task_id = str(uuid.uuid4())
-            
-            # 开始分析
-            analysis_questions = self._get_analysis_questions(analysis_type)
-            total_questions = len(analysis_questions)
-            
-            # 发送开始信号
-            start_data = {
-                "status": "started",
-                "task_id": task_id,
-                "total_steps": total_questions
-            }
-            yield f"data: {json.dumps(start_data)}\n\n"
-            
-            for i, (section, question) in enumerate(analysis_questions.items()):
-                progress = (i / total_questions) * 100
-                
-                # 发送处理状态
-                processing_data = {
-                    "status": "processing",
-                    "step": section,
-                    "progress": progress
-                }
-                yield f"data: {json.dumps(processing_data)}\n\n"
-                
-                # 获取分析结果
-                try:
-                    result = await self.qa_service.answer_question(question)
-                    
-                    if result:
-                        # 发送完成的步骤
-                        completed_data = {
-                            "status": "step_completed",
-                            "section": section,
-                            "content": result
-                        }
-                        yield f"data: {json.dumps(completed_data)}\n\n"
-                    else:
-                        # 发送错误步骤
-                        error_data = {
-                            "status": "step_error", 
-                            "section": section,
-                            "error": "无法获取相关分析信息"
-                        }
-                        yield f"data: {json.dumps(error_data)}\n\n"
-                        
-                except Exception as e:
-                    # 发送步骤错误
-                    error_data = {
-                        "status": "step_error",
-                        "section": section, 
-                        "error": str(e)
-                    }
-                    yield f"data: {json.dumps(error_data)}\n\n"
-                
-                await asyncio.sleep(0.1)
-            
-            # 发送完成信号
-            completed_data = {
-                "status": "completed",
-                "task_id": task_id
-            }
-            yield f"data: {json.dumps(completed_data)}\n\n"
-            
-        except Exception as e:
-            # 发送全局错误
-            error_data = {
-                "status": "error",
-                "error": str(e)
-            }
-            yield f"data: {json.dumps(error_data)}\n\n"
     
     async def generate_report(self, doc_ids: Optional[List[int]], analysis_type: str, company_name: str) -> Dict[str, Any]:
         """生成财务报告"""
