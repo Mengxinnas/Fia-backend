@@ -5,14 +5,17 @@ import jieba
 import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from app.config import settings
 import json
+import os
 
 class VectorService:
     """向量化服务"""
     
     def __init__(self):
-        self.vector_dimension = settings.VECTOR_DIMENSION
+        self.vector_dimension = 768
+        self.chunk_size = 1000
+        self.min_chunk_length = 50
+        
         self.index = faiss.IndexFlatL2(self.vector_dimension)
         self.document_store: Dict[int, Dict[str, Any]] = {}
         self.tfidf_vectorizer = TfidfVectorizer(
@@ -83,7 +86,7 @@ class VectorService:
                 continue
                 
             # 如果当前块加上新句子后超过限制，保存当前块
-            if len(current_chunk) + len(sentence) > settings.CHUNK_SIZE:
+            if len(current_chunk) + len(sentence) > self.chunk_size:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
                 current_chunk = sentence
@@ -95,11 +98,11 @@ class VectorService:
             chunks.append(current_chunk.strip())
         
         # 过滤太短的块
-        chunks = [chunk for chunk in chunks if len(chunk) >= settings.MIN_CHUNK_LENGTH]
+        chunks = [chunk for chunk in chunks if len(chunk) >= self.min_chunk_length]
         
         return chunks
     
-    async def add_document(self, filename: str, text: str) -> Dict[str, Any]:
+    async def add_document(self, text: str, filename: str) -> str:
         """添加文档到向量数据库"""
         try:
             # 分割文本
@@ -148,14 +151,7 @@ class VectorService:
                 'text_length': len(text)
             }
             
-            return {
-                'doc_id': doc_id,
-                'filename': filename,
-                'text_length': len(text),
-                'chunks_count': len(chunks),
-                'vectors_created': len(vectors),
-                'vector_dimension': self.vector_dimension
-            }
+            return str(doc_id)
             
         except Exception as e:
             print(f"添加文档时出错: {e}")
@@ -200,10 +196,11 @@ class VectorService:
     def _find_chunk_by_vector_index(self, vector_idx: int) -> Optional[Dict[str, Any]]:
         """根据向量索引找到对应的文档块"""
         for doc_id, doc_info in self.document_store.items():
-            vector_indices = doc_info['vector_indices']
-            if vector_idx in vector_indices:
-                chunk_idx = vector_indices.index(vector_idx)
-                chunk = doc_info['chunks'][chunk_idx]
+            if vector_idx in doc_info['vector_indices']:
+                # 找到在该文档中的位置
+                local_idx = doc_info['vector_indices'].index(vector_idx)
+                chunk = doc_info['chunks'][local_idx]
+                
                 return {
                     'text': chunk['text'],
                     'filename': doc_info['filename'],
@@ -212,47 +209,18 @@ class VectorService:
                 }
         return None
     
-    def get_all_documents(self) -> List[Dict[str, Any]]:
-        """获取所有文档信息"""
-        documents = []
-        for doc_id, doc_info in self.document_store.items():
-            documents.append({
-                'id': doc_id,
-                'filename': doc_info['filename'],
-                'text_length': doc_info['text_length'],
-                'chunk_count': doc_info['chunk_count'],
-                'created_at': doc_info['created_at']
-            })
-        return documents
-    
-    def clear_all(self):
-        """清空所有数据"""
-        self.index = faiss.IndexFlatL2(self.vector_dimension)
-        self.document_store = {}
-        self.doc_id_counter = 0
-        self.tfidf_fitted = False
-        self.tfidf_vectorizer = TfidfVectorizer(
-            max_features=self.vector_dimension,
-            stop_words=None,
-            ngram_range=(1, 2)
-        )
-    
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
+        total_docs = len(self.document_store)
+        total_vectors = self.index.ntotal
+        total_text_length = sum(doc['text_length'] for doc in self.document_store.values())
+        
         return {
-            'total_documents': len(self.document_store),
-            'total_vectors': self.index.ntotal,
-            'tfidf_fitted': self.tfidf_fitted,
-            'vector_dimension': self.vector_dimension,
-            'files': [
-                {
-                    'filename': info['filename'],
-                    'text_length': info['text_length'],
-                    'chunk_count': info['chunk_count']
-                }
-                for info in self.document_store.values()
-            ]
+            'total_documents': total_docs,
+            'total_vectors': total_vectors,
+            'total_text_length': total_text_length,
+            'average_chunks_per_doc': total_vectors / total_docs if total_docs > 0 else 0
         }
 
-# 全局实例
+# 创建全局实例
 vector_service = VectorService() 

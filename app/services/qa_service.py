@@ -1,17 +1,16 @@
 import httpx
 from typing import Dict, Any, List
-from app.config import settings
-from app.services.vector_service import vector_service
+import os
 
 class QAService:
     """问答服务"""
     
     def __init__(self):
-        self.api_key = settings.DEEPSEEK_API_KEY
-        self.api_base = settings.DEEPSEEK_API_BASE
+        self.api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        self.api_base = "https://api.deepseek.com/v1"
         
-    async def get_answer(self, question: str) -> Dict[str, Any]:
-        """获取问题答案"""
+    async def answer_question(self, question: str) -> str:
+        """回答问题"""
         try:
             # 1. 从向量数据库检索相关上下文
             context = await self._get_context(question)
@@ -19,30 +18,16 @@ class QAService:
             # 2. 调用AI生成答案
             answer = await self._generate_answer(question, context)
             
-            # 3. 获取相关文档信息
-            sources = await self._get_sources(question)
-            
-            return {
-                "success": True,
-                "answer": answer,
-                "sources": sources,
-                "context_used": len(context) > 0,
-                "question": question
-            }
+            return answer
             
         except Exception as e:
             print(f"问答处理错误: {str(e)}")
-            return {
-                "success": False,
-                "answer": f"抱歉，处理您的问题时出现错误: {str(e)}",
-                "sources": [],
-                "context_used": False,
-                "question": question
-            }
+            return f"抱歉，处理您的问题时出现错误: {str(e)}"
     
     async def _get_context(self, question: str, max_length: int = 2000) -> str:
         """获取相关上下文"""
         try:
+            from app.services.vector_service import vector_service
             results = vector_service.search(question, top_k=5)
             
             context_parts = []
@@ -70,7 +55,10 @@ class QAService:
         """生成答案"""
         try:
             if not self.api_key:
-                return "抱歉，AI服务未配置，无法生成答案。"
+                if context:
+                    return f"基于文档内容，我找到了以下相关信息：\n\n{context[:800]}..."
+                else:
+                    return "抱歉，AI服务未配置且没有找到相关文档内容。"
             
             # 构建系统提示词
             system_prompt = f"""你是一个专业的财务分析助手。请基于以下文档内容回答用户的问题。
@@ -121,13 +109,14 @@ class QAService:
         except Exception as e:
             print(f"生成答案错误: {str(e)}")
             if context:
-                return f"基于文档内容，我找到了相关信息，但生成答案时出现错误: {str(e)}\n\n相关文档内容：\n{context[:500]}..."
+                return f"基于文档内容，我找到了相关信息，但生成答案时出现错误。\n\n相关文档内容：\n{context[:500]}..."
             else:
                 return f"抱歉，无法生成答案: {str(e)}"
     
     async def _get_sources(self, question: str) -> List[Dict[str, Any]]:
         """获取相关文档来源"""
         try:
+            from app.services.vector_service import vector_service
             results = vector_service.search(question, top_k=3)
             
             sources = []

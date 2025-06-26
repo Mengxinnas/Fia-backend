@@ -14,76 +14,35 @@ class FinancialAnalysisService:
         self.qa_service = QAService()
         self.running_tasks: Dict[str, Dict[str, Any]] = {}
         
-    async def generate_analysis(self, analysis_type: str = "comprehensive", company_name: str = "分析企业") -> Dict[str, Any]:
+    async def generate_analysis(self, analysis_type: str = "comprehensive", company_name: Optional[str] = None) -> str:
         """生成财务分析"""
         try:
-            task_id = str(uuid.uuid4())
-            
-            # 记录任务状态
-            self.running_tasks[task_id] = {
-                "status": "running",
-                "progress": 0.0,
-                "created_at": datetime.now(),
-                "analysis_type": analysis_type,
-                "company_name": company_name
-            }
+            company_display_name = company_name or "分析企业"
             
             # 根据分析类型生成不同的分析内容
-            analysis_result = await self._perform_analysis(task_id, analysis_type, company_name)
+            analysis_questions = self._get_analysis_questions(analysis_type)
             
-            # 更新任务状态
-            self.running_tasks[task_id]["status"] = "completed"
-            self.running_tasks[task_id]["progress"] = 100.0
-            self.running_tasks[task_id]["result"] = analysis_result
+            analysis_parts = []
             
-            return {
-                "success": True,
-                "task_id": task_id,
-                "analysis_result": analysis_result,
-                "message": "财务分析完成"
-            }
+            for section, question in analysis_questions.items():
+                # 获取答案
+                answer = await self.qa_service.answer_question(question)
+                analysis_parts.append(f"## {section}\n\n{answer}\n")
+                
+                # 模拟处理时间
+                await asyncio.sleep(0.1)
+            
+            # 生成完整报告
+            full_analysis = f"# {company_display_name}财务分析报告\n\n"
+            full_analysis += f"**分析类型**: {self._get_analysis_type_name(analysis_type)}\n"
+            full_analysis += f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            full_analysis += "---\n\n"
+            full_analysis += "\n".join(analysis_parts)
+            
+            return full_analysis
             
         except Exception as e:
-            if task_id in self.running_tasks:
-                self.running_tasks[task_id]["status"] = "failed"
-                self.running_tasks[task_id]["error"] = str(e)
-            
-            return {
-                "success": False,
-                "error": f"财务分析失败: {str(e)}"
-            }
-    
-    async def _perform_analysis(self, task_id: str, analysis_type: str, company_name: str) -> str:
-        """执行具体的财务分析"""
-        analysis_questions = self._get_analysis_questions(analysis_type)
-        
-        analysis_parts = []
-        total_questions = len(analysis_questions)
-        
-        for i, (section, question) in enumerate(analysis_questions.items()):
-            # 更新进度
-            progress = (i / total_questions) * 100
-            self.running_tasks[task_id]["progress"] = progress
-            
-            # 获取答案
-            result = await self.qa_service.get_answer(question)
-            
-            if result["success"]:
-                analysis_parts.append(f"## {section}\n\n{result['answer']}\n")
-            else:
-                analysis_parts.append(f"## {section}\n\n无法获取相关分析信息。\n")
-            
-            # 模拟处理时间
-            await asyncio.sleep(0.5)
-        
-        # 生成完整报告
-        full_analysis = f"# {company_name}财务分析报告\n\n"
-        full_analysis += f"**分析类型**: {self._get_analysis_type_name(analysis_type)}\n"
-        full_analysis += f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        full_analysis += "---\n\n"
-        full_analysis += "\n".join(analysis_parts)
-        
-        return full_analysis
+            return f"财务分析生成失败: {str(e)}"
     
     def _get_analysis_questions(self, analysis_type: str) -> Dict[str, str]:
         """获取不同类型的分析问题"""
@@ -145,12 +104,12 @@ class FinancialAnalysisService:
                 yield f"data: {{'status': 'processing', 'step': '{section}', 'progress': {progress}}}\n\n"
                 
                 # 获取分析结果
-                result = await self.qa_service.get_answer(question)
+                result = await self.qa_service.answer_question(question)
                 
-                if result["success"]:
-                    yield f"data: {{'status': 'step_completed', 'section': '{section}', 'content': {repr(result['answer'])}}}\n\n"
+                if result:
+                    yield f"data: {{'status': 'step_completed', 'section': '{section}', 'content': {repr(result)}}\n\n"
                 else:
-                    yield f"data: {{'status': 'step_error', 'section': '{section}', 'error': {repr(result.get('error', '未知错误'))}}}\n\n"
+                    yield f"data: {{'status': 'step_error', 'section': '{section}', 'error': {repr('无法获取相关分析信息')}}}\n\n"
                 
                 await asyncio.sleep(0.1)
             
@@ -163,7 +122,7 @@ class FinancialAnalysisService:
         """生成财务报告"""
         try:
             # 生成分析内容
-            analysis_result = await self._perform_analysis(str(uuid.uuid4()), analysis_type, company_name)
+            analysis_result = await self.generate_analysis(analysis_type, company_name)
             
             # 生成Word文档
             word_result = await self.generate_word_document(analysis_result, analysis_type, company_name)
