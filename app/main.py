@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -31,6 +32,11 @@ class QuestionRequest(BaseModel):
 class AnalysisRequest(BaseModel):
     analysis_type: str = "comprehensive"
     company_name: Optional[str] = None
+
+class StreamAnalysisRequest(BaseModel):
+    analysis_type: str = "comprehensive"
+    company_name: Optional[str] = None
+    task_id: Optional[str] = None
 
 # 初始化服务
 from app.services.file_parser import FileParserService
@@ -138,6 +144,26 @@ async def financial_analysis(request: AnalysisRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"财务分析失败: {str(e)}")
+
+@app.post("/api/financial-analysis/stream")
+async def stream_financial_analysis(request: StreamAnalysisRequest):
+    """流式财务分析接口"""
+    try:
+        return StreamingResponse(
+            financial_service.stream_analysis(
+                analysis_type=request.analysis_type,
+                task_id=request.task_id
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"流式分析失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(
